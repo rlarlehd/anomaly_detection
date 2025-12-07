@@ -12,17 +12,15 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from sklearn.metrics import roc_auc_score, average_precision_score
 
-# inference.py 에 세 클래스가 정의되어 있다고 가정
 from inference import AutoEncoderDetector, PaDiMDetector, PatchCoreDetector
 
 
-# ----------------- 설정 -----------------
 NORMAL_DIR = "normal"
 ANOMALY_DIR = "sampling"
 TEST_IMAGES_DIR = "test_samples"
 
-IMG_SIZE = (512, 512)       # inference 때 사용하던 사이즈 맞춰주기
-BATCH_SIZE = 4             # HW 여유에 따라 조절
+IMG_SIZE = (512, 512)    
+BATCH_SIZE = 4  
 NUM_WORKERS = 0
 PIN_MEMORY = False
 
@@ -32,12 +30,7 @@ OUT_DIR = Path("eval_results")
 OUT_DIR.mkdir(exist_ok=True)
 
 
-# ----------------- 데이터셋 정의 -----------------
 class LabeledImageFolder(Dataset):
-    """
-    root_dir 아래의 모든 .jpg를 읽어서 label을 부여하는 Dataset
-    label: 0(normal) 또는 1(anomaly)
-    """
     def __init__(self, root_dir, label, transform=None):
         self.root = Path(root_dir)
         self.label = label
@@ -59,7 +52,6 @@ class LabeledImageFolder(Dataset):
 
 
 class UnlabeledImageFolder(Dataset):
-    """test_images/ 용 – label 없이 경로만 반환"""
     def __init__(self, root_dir, transform=None):
         self.root = Path(root_dir)
         self.transform = transform
@@ -110,9 +102,7 @@ def build_dataloaders():
     return full_loader, test_loader
 
 
-# ----------------- 공통 유틸 함수 -----------------
 def find_best_threshold(y_true, y_scores, num_steps=500):
-    """F1이 최대가 되는 threshold 탐색 (모든 모델 공통)"""
     y_true = np.asarray(y_true)
     y_scores = np.asarray(y_scores)
 
@@ -145,10 +135,6 @@ def find_best_threshold(y_true, y_scores, num_steps=500):
 
 
 def evaluate_detector(detector, loader, name="Model"):
-    """
-    detector.score_batch(imgs) 를 이용해 전체 데이터에 대한
-    y_true, y_scores, 추론시간을 측정
-    """
     detector_name = name
     all_scores = []
     all_labels = []
@@ -162,7 +148,7 @@ def evaluate_detector(detector, loader, name="Model"):
     with torch.no_grad():
         for imgs, labels, paths in loader:
             start = time.perf_counter()
-            scores = detector.score_batch(imgs)   # np.ndarray 또는 list 반환 가정
+            scores = detector.score_batch(imgs)  
             end = time.perf_counter()
 
             infer_time = end - start
@@ -176,12 +162,10 @@ def evaluate_detector(detector, loader, name="Model"):
     y_scores = np.concatenate(all_scores)
     y_true = np.concatenate(all_labels)
 
-    # 성능 지표
     auroc = roc_auc_score(y_true, y_scores)
     auprc = average_precision_score(y_true, y_scores)
     best_thr, best_f1, best_prec, best_rec = find_best_threshold(y_true, y_scores)
 
-    # Confusion matrix at best threshold
     y_pred = (y_scores > best_thr).astype(int)
     tp = int(((y_pred == 1) & (y_true == 1)).sum())
     tn = int(((y_pred == 0) & (y_true == 0)).sum())
@@ -215,7 +199,6 @@ def evaluate_detector(detector, loader, name="Model"):
 
 
 def run_on_test_images(detector, loader, name="Model"):
-    """레이블 없는 test_images 20장에 대해 score + 예측을 CSV로 저장 (옵션)"""
     if loader is None:
         return
 
@@ -237,18 +220,15 @@ def run_on_test_images(detector, loader, name="Model"):
     print(f"[{name}] Saved test_images scores to {out_csv}")
 
 
-# ----------------- 메인 -----------------
 def main():
     print("DEVICE:", DEVICE)
 
     full_loader, test_loader = build_dataloaders()
 
-    # 1. Detector 로드 (inference.py 안에서 내부적으로 모델/threshold를 로드한다고 가정)
     ae = AutoEncoderDetector()
     padim = PaDiMDetector()
     patchcore = PatchCoreDetector()
 
-    # 2. 전체 normal + anomaly 데이터로 성능 평가
     results = []
 
     r_ae, _ = evaluate_detector(ae, full_loader, name="AutoEncoder")
@@ -260,15 +240,12 @@ def main():
     r_pc, _ = evaluate_detector(patchcore, full_loader, name="PatchCore")
     results.append(r_pc)
 
-    # 3. 결과를 테이블(표)로 저장
     df = pd.DataFrame(results)
     table_path = OUT_DIR / "model_performance_summary.csv"
     df.to_csv(table_path, index=False)
     print(f"\nSaved performance table to {table_path}")
     print(df)
 
-    # 4. 메트릭 시각화 (바 차트)
-    # 4-1. AUROC / AUPRC / BestF1
     plt.figure(figsize=(8, 5))
     x = np.arange(len(results))
     width = 0.25
@@ -295,7 +272,6 @@ def main():
     plt.close()
     print(f"Saved performance plot to {perf_fig_path}")
 
-    # 4-2. Precision / Recall
     plt.figure(figsize=(8, 5))
     precs = [r["Precision"] for r in results]
     recs = [r["Recall"] for r in results]
@@ -316,9 +292,8 @@ def main():
     plt.close()
     print(f"Saved precision/recall plot to {pr_fig_path}")
 
-    # 5. 추론 시간 시각화 (초/이미지)
     plt.figure(figsize=(6, 4))
-    times = [r["AvgTimePerImage"] for r in results]  # seconds per image
+    times = [r["AvgTimePerImage"] for r in results]
 
     plt.bar(labels, times)
     plt.ylabel("Seconds per image")
@@ -331,7 +306,6 @@ def main():
     plt.close()
     print(f"Saved inference time plot to {time_fig_path}")
 
-    # 6. 옵션: test_images/ 20장에 대한 score CSV 저장
     if test_loader is not None:
         run_on_test_images(ae, test_loader, name="AutoEncoder")
         run_on_test_images(padim, test_loader, name="PaDiM")

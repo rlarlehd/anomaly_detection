@@ -14,7 +14,6 @@ from torchvision import transforms, models
 from sklearn.metrics import roc_auc_score, average_precision_score
 
 
-# ===================== 공통 설정 =====================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMG_SIZE = (256, 256)
 BATCH_SIZE = 8
@@ -34,12 +33,8 @@ PATCHCORE_MEM_PATH = CKPT_DIR / "patchcore_mem_256.pt"
 PATCHCORE_RESULT_PATH = CKPT_DIR / "patchcore_result.json"
 
 
-# ===================== 공통 유틸 =====================
 class SimpleImageFolder(Dataset):
     def __init__(self, root_dir, label, transform=None):
-        """
-        root_dir 아래의 모든 jpg를 읽어서 label(0:normal, 1:anomaly)을 붙인다.
-        """
         self.root = Path(root_dir)
         self.transform = transform
         self.label = label
@@ -96,9 +91,6 @@ def evaluate_from_scores(y_true, y_scores, thr):
 
 
 def find_best_threshold(y_true, y_scores, num_steps: int = 500):
-    """
-    F1 최대가 되도록 threshold 탐색 (모델 공통으로 사용)
-    """
     y_true = np.asarray(y_true)
     y_scores = np.asarray(y_scores)
 
@@ -129,9 +121,6 @@ def find_best_threshold(y_true, y_scores, num_steps: int = 500):
     return best_thr, best_f1, best_prec, best_rec
 
 
-# ====================================================
-# 1. AutoEncoder 기반 Detector
-# ====================================================
 class CnnAutoEncoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -181,8 +170,8 @@ class AutoEncoderDetector:
     def score_batch(self, imgs):
         imgs = imgs.to(DEVICE, non_blocking=True)
         recon = self.model(imgs)
-        err = F.mse_loss(recon, imgs, reduction="none")  # [B, C, H, W]
-        err = err.view(err.size(0), -1).mean(dim=1)      # [B]
+        err = F.mse_loss(recon, imgs, reduction="none")  
+        err = err.view(err.size(0), -1).mean(dim=1)     
         return err.cpu().numpy()
 
     def run_on_loader(self, loader):
@@ -198,9 +187,6 @@ class AutoEncoderDetector:
         return all_labels, all_scores, all_paths
 
 
-# ====================================================
-# 2. PaDiM 기반 Detector (단일 Gaussian 버전)
-# ====================================================
 class ResNetFeatureExtractor(nn.Module):
     def __init__(self):
         super().__init__()
@@ -230,7 +216,7 @@ class ResNetFeatureExtractor(nn.Module):
         B, C1, H1, W1 = f1.shape
         f2_up = F.interpolate(f2, size=(H1, W1), mode="bilinear", align_corners=False)
         f3_up = F.interpolate(f3, size=(H1, W1), mode="bilinear", align_corners=False)
-        feat = torch.cat([f1, f2_up, f3_up], dim=1)  # [B, C, H, W]
+        feat = torch.cat([f1, f2_up, f3_up], dim=1)  
         return feat
 
 
@@ -241,8 +227,8 @@ class PaDiMDetector:
 
         print("[PaDiM] Loading stats from", PADIM_STAT_PATH)
         stats = torch.load(PADIM_STAT_PATH, map_location="cpu")
-        self.mean = stats["mean"].to(DEVICE)       # [C]
-        self.cov_inv = stats["cov_inv"].to(DEVICE) # [C, C]
+        self.mean = stats["mean"].to(DEVICE)    
+        self.cov_inv = stats["cov_inv"].to(DEVICE) 
 
         if PADIM_RESULT_PATH.exists():
             print("[PaDiM] Loading threshold from", PADIM_RESULT_PATH)
@@ -255,20 +241,18 @@ class PaDiMDetector:
     @torch.no_grad()
     def score_batch(self, imgs):
         imgs = imgs.to(DEVICE, non_blocking=True)
-        feat = self.extractor(imgs)              # [B, C, H, W]
+        feat = self.extractor(imgs)            
         B, C, H, W = feat.shape
-        feat = feat.permute(0, 2, 3, 1).reshape(-1, C)  # [B*H*W, C]
+        feat = feat.permute(0, 2, 3, 1).reshape(-1, C) 
 
         mean = self.mean
         cov_inv = self.cov_inv
 
-        diff = feat - mean  # [N, C]
+        diff = feat - mean 
         m = diff @ cov_inv
-        m = (m * diff).sum(dim=1)  # [N]
-        m = m.reshape(B, H, W)     # [B, H, W]
-
-        # 이미지 단위 score (여기서는 mean 사용; 필요하면 max/top-k로 바꿔도 됨)
-        score_per_img = m.view(B, -1).mean(dim=1)  # [B]
+        m = (m * diff).sum(dim=1)  
+        m = m.reshape(B, H, W)  
+        score_per_img = m.view(B, -1).mean(dim=1)  
         return score_per_img.cpu().numpy()
 
     def run_on_loader(self, loader):
@@ -284,23 +268,16 @@ class PaDiMDetector:
         return all_labels, all_scores, all_paths
 
 
-# ====================================================
-# 3. PatchCore 기반 Detector (간단 kNN 버전)
-# ====================================================
 class PatchCoreDetector:
     def __init__(self):
-        # feature extractor (예: ResNet18 layer1~3 concat)
         self.extractor = ResNetFeatureExtractor().to(DEVICE)
         self.extractor.eval()
 
         print("[PatchCore] Loading memory bank from", PATCHCORE_MEM_PATH)
-        # TODO: 여기 부분은 본인이 저장한 형식에 맞게 수정
-        # 예: torch.save({"memory": memory_bank}, PATCHCORE_MEM_PATH)
         mem_obj = torch.load(PATCHCORE_MEM_PATH, map_location="cpu")
         if isinstance(mem_obj, dict) and "memory" in mem_obj:
             self.memory = mem_obj["memory"].to(DEVICE)  # [N_mem, C]
         else:
-            # 그냥 텐서만 저장했다면:
             self.memory = mem_obj.to(DEVICE)
 
         if PATCHCORE_RESULT_PATH.exists():
@@ -313,26 +290,18 @@ class PatchCoreDetector:
 
     @torch.no_grad()
     def score_batch(self, imgs, k=5):
-        """
-        매우 단순한 PatchCore 스타일:
-        - 입력 feature patch들 -> memory bank와의 거리 계산
-        - 각 patch에 대해 k-NN 거리 평균
-        - 이미지 score = patch score의 상위 몇 % 평균
-        """
         imgs = imgs.to(DEVICE, non_blocking=True)
-        feat = self.extractor(imgs)  # [B, C, H, W]
+        feat = self.extractor(imgs) 
         B, C, H, W = feat.shape
-        feat = feat.permute(0, 2, 3, 1).reshape(B, -1, C)  # [B, P, C], P = H*W
+        feat = feat.permute(0, 2, 3, 1).reshape(B, -1, C) 
 
         scores = []
         for b in range(B):
-            f = feat[b]  # [P, C]
-            # [P, N_mem] 거리 계산 (메모리 많으면 여기서 시간이 걸릴 수 있음)
-            dist = torch.cdist(f.unsqueeze(0), self.memory.unsqueeze(0)).squeeze(0)  # [P, N_mem]
-            topk_vals, _ = torch.topk(dist, k, dim=1, largest=False)  # 가까운 것 k개
-            patch_score = topk_vals.mean(dim=1)  # [P]
+            f = feat[b] 
+            dist = torch.cdist(f.unsqueeze(0), self.memory.unsqueeze(0)).squeeze(0) 
+            topk_vals, _ = torch.topk(dist, k, dim=1, largest=False) 
+            patch_score = topk_vals.mean(dim=1) 
 
-            # 이미지 score: 상위 1% patch score 평균
             p = patch_score.numel()
             kk = max(1, int(p * 0.01))
             top_patches, _ = torch.topk(patch_score, kk, largest=True)
@@ -354,9 +323,6 @@ class PatchCoreDetector:
         return all_labels, all_scores, all_paths
 
 
-# ====================================================
-# 메인: 3가지 방법으로 실제 normal/이상 가려내기
-# ====================================================
 def main():
     loader = get_eval_dataloader()
 

@@ -8,7 +8,6 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-# Detector 클래스 import
 from inference import AutoEncoderDetector, PaDiMDetector, PatchCoreDetector
 
 
@@ -21,9 +20,6 @@ transform = transforms.Compose([
 ])
 
 
-# -------------------------------
-# 1. 이미지 하나 → 모델별 anomaly score 시각화
-# -------------------------------
 @torch.no_grad()
 def visualize_single_image(img_path, ae, padim, patchcore):
     img = Image.open(img_path).convert("RGB")
@@ -40,7 +36,6 @@ def visualize_single_image(img_path, ae, padim, patchcore):
     # PatchCore score
     patch_score = patchcore.score_batch(x)[0]
     patch_pred = "ANOMALY" if patch_score > patchcore.threshold else "NORMAL"
-
     # ---- 시각화 ----
     plt.figure(figsize=(7, 7))
     plt.imshow(img)
@@ -55,9 +50,6 @@ def visualize_single_image(img_path, ae, padim, patchcore):
     plt.show()
 
 
-# -------------------------------
-# 2. 여러 이미지(랜덤 10장) → grid 시각화
-# -------------------------------
 @torch.no_grad()
 def visualize_multiple_images(folder, ae, padim, patchcore, count=10):
     folder = Path(folder)
@@ -84,7 +76,6 @@ def visualize_multiple_images(folder, ae, padim, patchcore, count=10):
         patch_score = patchcore.score_batch(x)[0]
         patch_pred = "Anomaly" if patch_score > patchcore.threshold else "Normal"
 
-        # ---------------- 시각화 ----------------
         plt.subplot(rows, cols, i + 1)
         plt.imshow(img)
         plt.axis("off")
@@ -98,17 +89,11 @@ def visualize_multiple_images(folder, ae, padim, patchcore, count=10):
     plt.show()
 
 
-# -------------------------------
-# 실행 예시
-# -------------------------------
 if __name__ == "__main__":
     print("Loading detectors...")
     ae = AutoEncoderDetector()
     padim = PaDiMDetector()
     patchcore = PatchCoreDetector()
     image_list = glob(os.path.join("test_images", "*.jpg"))
-    # 단일 이미지 테스트
-    # for test_img in image_list:
-    #     visualize_single_image(test_img, ae, padim, patchcore)
 
     visualize_multiple_images("test_samples", ae, padim, patchcore, count=15)
